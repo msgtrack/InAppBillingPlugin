@@ -101,18 +101,24 @@ namespace Plugin.InAppBilling
 				return null;
 
 			// Transform it to InAppBillingPurchase
-			return purchaseResult.ReceiptXml.ToInAppBillingPurchase(purchaseResult.Status).FirstOrDefault();
-			
-        }
+			InAppBillingPurchase purchase = purchaseResult.ReceiptXml.ToInAppBillingPurchase(purchaseResult.Status).FirstOrDefault();
 
-        /// <summary>
-        /// Consume a purchase with a purchase token.
-        /// </summary>
-        /// <param name="productId">Id or Sku of product</param>
-        /// <param name="purchaseToken">Original Purchase Token</param>
-        /// <returns>If consumed successful</returns>
-        /// <exception cref="InAppBillingPurchaseException">If an error occures during processing</exception>
-        public async override Task<InAppBillingPurchase> ConsumePurchaseAsync(string productId, string purchaseToken)
+			if (verifyPurchase == null)
+				return purchase;
+
+			var validated = await verifyPurchase.VerifyPurchase(receipt, string.Empty, purchase.ProductId, purchase.Id);
+
+			return validated ? purchase : null;
+		}
+
+		/// <summary>
+		/// Consume a purchase with a purchase token.
+		/// </summary>
+		/// <param name="productId">Id or Sku of product</param>
+		/// <param name="purchaseToken">Original Purchase Token</param>
+		/// <returns>If consumed successful</returns>
+		/// <exception cref="InAppBillingPurchaseException">If an error occures during processing</exception>
+		public async override Task<InAppBillingPurchase> ConsumePurchaseAsync(string productId, string purchaseToken)
         {
             var result = await CurrentAppMock.ReportConsumableFulfillmentAsync(InTestingMode, productId, new Guid(purchaseToken));
             switch(result)
