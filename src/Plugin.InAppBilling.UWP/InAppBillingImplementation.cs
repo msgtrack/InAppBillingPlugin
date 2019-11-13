@@ -106,7 +106,7 @@ namespace Plugin.InAppBilling
 			if (verifyPurchase == null)
 				return purchase;
 
-			var validated = await verifyPurchase.VerifyPurchase(receipt, string.Empty, purchase.ProductId, purchase.Id);
+			var validated = await verifyPurchase.VerifyPurchase(purchaseResult.ReceiptXml, string.Empty, purchase.ProductId, purchase.Id);
 
 			return validated ? purchase : null;
 		}

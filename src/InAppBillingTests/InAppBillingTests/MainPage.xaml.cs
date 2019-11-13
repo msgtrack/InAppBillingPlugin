@@ -8,6 +8,19 @@ using Xamarin.Forms;
 
 namespace InAppBillingTests
 {
+	public class PurchaseVerificationTest : Plugin.InAppBilling.Abstractions.IInAppBillingVerifyPurchase
+	{
+		public bool VerifyCalled { get; set; }
+
+		public async Task<bool> VerifyPurchase(string signedData, string signature, string productId, string transactionId)
+		{
+			VerifyCalled = true;		
+   
+			return true;
+		}
+
+	}
+
 	public partial class MainPage : ContentPage
 	{
 		public MainPage()
@@ -20,16 +33,22 @@ namespace InAppBillingTests
 
 		}
 
+		
 		private async void ButtonNonConsumable_Clicked(object sender, EventArgs e)
 		{
 			var id = "iaptest";
 			try
 			{
-				var purchase = await CrossInAppBilling.Current.PurchaseAsync(id, Plugin.InAppBilling.Abstractions.ItemType.InAppPurchase, "mypayload");
+				PurchaseVerificationTest purchaseVerification = new PurchaseVerificationTest();
+				var purchase = await CrossInAppBilling.Current.PurchaseAsync(id, Plugin.InAppBilling.Abstractions.ItemType.InAppPurchase, "mypayload", purchaseVerification);
 
 				if (purchase == null)
 				{
 					await DisplayAlert(string.Empty, "Did not purchase", "OK");
+				}
+				else if (purchaseVerification.VerifyCalled == false)
+				{
+					await DisplayAlert(string.Empty, "Verify not called", "OK");
 				}
 				else
 				{
