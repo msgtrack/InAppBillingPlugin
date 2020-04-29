@@ -1,6 +1,8 @@
 using Plugin.InAppBilling.Abstractions;
+using Plugin.InAppBilling.UWPPrivate;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Xml;
@@ -13,29 +15,49 @@ namespace Plugin.InAppBilling
     /// </summary>
     public class InAppBillingImplementation : BaseInAppBilling
     {
-        /// <summary>
-        /// Default constructor
-        /// </summary>
-        public InAppBillingImplementation()
+		private BaseInAppBilling currentInAppBilling;
+		private const Boolean useOldOne = false;
+
+
+		/// <summary>
+		/// Default constructor
+		/// </summary>
+		public InAppBillingImplementation()
         {
-        }
-        /// <summary>
-        /// Gets or sets if in testing mode. Only for UWP
-        /// </summary>
-        public override bool InTestingMode { get; set; }
+
+			if( useOldOne )
+			{
+				currentInAppBilling = new InAppBillingImplOld();
+			}
+			else
+			{
+				currentInAppBilling = new InAppBillingStoreNew();
+			}
+
+		}
+		/// <summary>
+		/// Gets or sets if in testing mode. Only for UWP
+		/// </summary>
+		public override bool InTestingMode { get { return currentInAppBilling.InTestingMode;  } set { currentInAppBilling.InTestingMode = value; } }
 
 
-        /// <summary>
-        /// Connect to billing service
-        /// </summary>
-        /// <returns>If Success</returns>
-        public override Task<bool> ConnectAsync(ItemType itemType = ItemType.InAppPurchase) => Task.FromResult(true);
+		/// <summary>
+		/// Connect to billing service
+		/// </summary>
+		/// <returns>If Success</returns>
+		public override Task<bool> ConnectAsync(ItemType itemType = ItemType.InAppPurchase)
+		{
+			return currentInAppBilling.ConnectAsync(itemType);
+		}
 
         /// <summary>
         /// Disconnect from the billing service
         /// </summary>
         /// <returns>Task to disconnect</returns>
-        public override Task DisconnectAsync() => Task.CompletedTask;
+        public override Task DisconnectAsync()
+		{
+			return currentInAppBilling.DisconnectAsync();
+		}
 
         /// <summary>
         /// Gets product information
@@ -45,38 +67,12 @@ namespace Plugin.InAppBilling
         /// <returns></returns>
         public async override Task<IEnumerable<InAppBillingProduct>> GetProductInfoAsync(ItemType itemType, params string[] productIds)
         {
-            // Get list of products from store or simulator
-            var listingInformation = await CurrentAppMock.LoadListingInformationAsync(InTestingMode);
-
-            var products = new List<InAppBillingProduct>();
-            foreach (var productId in productIds)
-            {
-                // Check if requested product exists
-                if (!listingInformation.ProductListings.ContainsKey(productId))
-                    continue;
-
-                // Get product and transform it to an InAppBillingProduct
-                var product = listingInformation.ProductListings[productId];
-                products.Add(new InAppBillingProduct
-                {
-                    Name = product.Name,
-                    Description = product.Description,
-                    ProductId = product.ProductId,
-                    LocalizedPrice = product.FormattedPrice,
-                    //CurrencyCode = product.CurrencyCode // Does not work at the moment, as UWP throws an InvalidCastException when getting CurrencyCode
-                });
-            }
-
-            return products;
+            return await currentInAppBilling.GetProductInfoAsync(itemType, productIds);
         }
 
         protected async override Task<IEnumerable<InAppBillingPurchase>> GetPurchasesAsync(ItemType itemType, IInAppBillingVerifyPurchase verifyPurchase, string verifyOnlyProductId)
         {
-            // Get list of product receipts from store or simulator
-            var xmlReceipt = await CurrentAppMock.GetAppReceiptAsync(InTestingMode);
-
-            // Transform it to list of InAppBillingPurchase
-            return xmlReceipt.ToInAppBillingPurchase(ProductPurchaseStatus.AlreadyPurchased);
+            return await currentInAppBilling.GetPurchasesAsync(itemType,verifyPurchase);
         }
 
         /// <summary>
@@ -90,25 +86,7 @@ namespace Plugin.InAppBilling
         /// <exception cref="InAppBillingPurchaseException">If an error occurs during processing</exception>
         public async override Task<InAppBillingPurchase> PurchaseAsync(string productId, ItemType itemType, string payload, IInAppBillingVerifyPurchase verifyPurchase = null)
         {
-            // Get purchase result from store or simulator
-            var purchaseResult = await CurrentAppMock.RequestProductPurchaseAsync(InTestingMode, productId);
-
-
-			if (purchaseResult == null)
-				return null;
-
-			if (string.IsNullOrWhiteSpace(purchaseResult.ReceiptXml))
-				return null;
-
-			// Transform it to InAppBillingPurchase
-			InAppBillingPurchase purchase = purchaseResult.ReceiptXml.ToInAppBillingPurchase(purchaseResult.Status).FirstOrDefault();
-
-			if (verifyPurchase == null)
-				return purchase;
-
-			var validated = await verifyPurchase.VerifyPurchase(purchaseResult.ReceiptXml, string.Empty, purchase.ProductId, purchase.Id);
-
-			return validated ? purchase : null;
+			return await currentInAppBilling.PurchaseAsync(productId, itemType, payload, verifyPurchase);
 		}
 
 		/// <summary>
@@ -120,30 +98,7 @@ namespace Plugin.InAppBilling
 		/// <exception cref="InAppBillingPurchaseException">If an error occures during processing</exception>
 		public async override Task<InAppBillingPurchase> ConsumePurchaseAsync(string productId, string purchaseToken)
         {
-            var result = await CurrentAppMock.ReportConsumableFulfillmentAsync(InTestingMode, productId, new Guid(purchaseToken));
-            switch(result)
-            {
-                case FulfillmentResult.ServerError:
-                    throw new InAppBillingPurchaseException(PurchaseError.AppStoreUnavailable);
-                case FulfillmentResult.NothingToFulfill:
-                    throw new InAppBillingPurchaseException(PurchaseError.ItemUnavailable);
-                case FulfillmentResult.PurchasePending:
-                case FulfillmentResult.PurchaseReverted:
-                    throw new InAppBillingPurchaseException(PurchaseError.GeneralError);
-                case FulfillmentResult.Succeeded:
-                    return new InAppBillingPurchase
-                    {
-                        Id = purchaseToken,
-                        AutoRenewing = false,
-                        Payload = string.Empty, 
-                        PurchaseToken = purchaseToken,
-                        ProductId = productId,
-                        State = PurchaseState.Purchased,
-                        TransactionDateUtc = DateTime.UtcNow
-                    };
-                default:
-                    return null;
-            }
+			return await currentInAppBilling.ConsumePurchaseAsync(productId, purchaseToken);
         }
 
         /// <summary>
@@ -157,131 +112,10 @@ namespace Plugin.InAppBilling
         /// <exception cref="InAppBillingPurchaseException">If an error occures during processing</exception>
         public async override Task<InAppBillingPurchase> ConsumePurchaseAsync(string productId, ItemType itemType, string payload, IInAppBillingVerifyPurchase verifyPurchase = null)
         {
-            var items = await CurrentAppMock.GetAvailableConsumables(InTestingMode);
-
-            var consumable = items.FirstOrDefault(i => i.ProductId == productId);
-            if(consumable == null)
-                throw new InAppBillingPurchaseException(PurchaseError.ItemUnavailable);
-
-            var result = await CurrentAppMock.ReportConsumableFulfillmentAsync(InTestingMode, productId, consumable.TransactionId);
-            switch (result)
-            {
-                case FulfillmentResult.ServerError:
-                    throw new InAppBillingPurchaseException(PurchaseError.GeneralError);
-                case FulfillmentResult.NothingToFulfill:
-                    throw new InAppBillingPurchaseException(PurchaseError.ItemUnavailable);
-                case FulfillmentResult.PurchasePending:
-                case FulfillmentResult.PurchaseReverted:
-                    throw new InAppBillingPurchaseException(PurchaseError.GeneralError);
-                case FulfillmentResult.Succeeded:
-                    return new InAppBillingPurchase
-                    {
-                        AutoRenewing = false,
-                        Id = consumable.TransactionId.ToString(),
-                        Payload = payload,
-                        ProductId = consumable.ProductId,
-                        PurchaseToken = consumable.TransactionId.ToString(),
-                        State = PurchaseState.Purchased,
-                        TransactionDateUtc = DateTime.UtcNow                        
-                    };
-                default:
-                    return null;
-            }
+			return await currentInAppBilling.ConsumePurchaseAsync(productId, itemType, payload, verifyPurchase);
         }
     }
 
-    /// <summary>
-    /// Unfortunately, CurrentApp and CurrentAppSimulator do not share an interface or base class
-    /// This is why, we use a mocking class here
-    /// </summary>
-    static class CurrentAppMock
-    {
-        public static async Task<IEnumerable<UnfulfilledConsumable>> GetAvailableConsumables(bool isTestingMode)
-        {
-            return isTestingMode ? await CurrentAppSimulator.GetUnfulfilledConsumablesAsync() : await CurrentApp.GetUnfulfilledConsumablesAsync();
-        }
-
-        public static async Task<FulfillmentResult> ReportConsumableFulfillmentAsync(bool isTestingMode, string productId, Guid transactionId)
-        {
-            return isTestingMode ? await CurrentAppSimulator.ReportConsumableFulfillmentAsync(productId, transactionId) : await CurrentApp.ReportConsumableFulfillmentAsync(productId, transactionId);
-        }
-
-        public static async Task<ListingInformation> LoadListingInformationAsync(bool isTestingMode)
-        {
-            return isTestingMode ? await CurrentAppSimulator.LoadListingInformationAsync() : await CurrentApp.LoadListingInformationAsync();
-        }
-
-        public static async Task<string> GetAppReceiptAsync(bool isTestingMode)
-        {
-            return isTestingMode ? await CurrentAppSimulator.GetAppReceiptAsync() : await CurrentApp.GetAppReceiptAsync();
-        }
-
-        public static async Task<PurchaseResults> RequestProductPurchaseAsync(bool isTestingMode, string productId)
-        {
-            return isTestingMode ? await CurrentAppSimulator.RequestProductPurchaseAsync(productId) : await CurrentApp.RequestProductPurchaseAsync(productId);
-        }
-    }
-
-    static class InAppBillingHelperUwp
-    {
-        /// <summary>
-        /// Read purchase data out of the UWP Receipt XML
-        /// </summary>
-        /// <param name="xml">Receipt XML</param>
-        /// <param name="status">Status of the purchase</param>
-        /// <returns>A list of purchases, the user has done</returns>
-        public static IEnumerable<InAppBillingPurchase> ToInAppBillingPurchase(this string xml, ProductPurchaseStatus status)
-        {
-            var purchases = new List<InAppBillingPurchase>();
-
-            var xmlDoc = new XmlDocument();
-			try
-			{
-				xmlDoc.LoadXml(xml);
-			}
-			catch
-			{
-				//Invalid XML, we haven't finished this transaction yet.
-			}
-
-            // Iterate through all ProductReceipt elements
-            var xmlProductReceipts = xmlDoc.GetElementsByTagName("ProductReceipt");
-            for (var i = 0; i < xmlProductReceipts.Count; i++)
-            {
-                var xmlProductReceipt = xmlProductReceipts[i];
-
-                // Create new InAppBillingPurchase with values from the xml element
-                var purchase = new InAppBillingPurchase()
-                {
-                    Id = xmlProductReceipt.Attributes["Id"].Value,
-                    TransactionDateUtc = Convert.ToDateTime(xmlProductReceipt.Attributes["PurchaseDate"].Value),
-                    ProductId = xmlProductReceipt.Attributes["ProductId"].Value,
-                    AutoRenewing = false // Not supported by UWP yet
-                };
-                purchase.PurchaseToken = purchase.Id;
-                // Map native UWP status to PurchaseState
-                switch (status)
-                {
-                    case ProductPurchaseStatus.AlreadyPurchased:
-                    case ProductPurchaseStatus.Succeeded:
-                        purchase.State = PurchaseState.Purchased;
-                        break;
-                    case ProductPurchaseStatus.NotFulfilled:
-                        purchase.State = PurchaseState.Deferred;
-                        break;
-                    case ProductPurchaseStatus.NotPurchased:
-                        purchase.State = PurchaseState.Canceled;
-                        break;
-                    default:
-                        purchase.State = PurchaseState.Unknown;
-                        break;
-                }
-
-                // Add to list of purchases
-                purchases.Add(purchase);
-            }
-
-            return purchases;
-        }
-    }
+	
+    
 }

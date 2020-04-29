@@ -110,6 +110,8 @@
       <Link>CrossInAppBilling.cs</Link>
     </Compile>
     <Compile Include="InAppBillingImplementation.cs" />
+    <Compile Include="InAppBillingImplOld.cs" />
+    <Compile Include="InAppBillingStoreNew.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Properties\Plugin.InAppBilling.rd.xml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
