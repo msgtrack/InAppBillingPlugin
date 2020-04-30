@@ -13,6 +13,7 @@ namespace Plugin.InAppBilling
 	{
 
 		private StoreContext storeContext = StoreContext.GetDefault();
+		private IEnumerable<StoreProduct> lastListOfProducts = null;
 
 		/// <summary>
 		/// Gets or sets if in testing mode. Only for UWP
@@ -41,6 +42,23 @@ namespace Plugin.InAppBilling
 			throw new NotImplementedException();
 		}
 
+		private async Task<string> GetMSProductIDForPID( string pid )
+		{
+			if( lastListOfProducts == null )
+			{
+				await GetProductInfoAsync(ItemType.InAppPurchase, new string[]{ "" } );
+			}
+			// TODO: determine MS product id for the PID
+			foreach( var product in lastListOfProducts )
+			{
+				if( product.InAppOfferToken.CompareTo(pid) == 0 )
+				{
+					return product.StoreId;
+				}
+			}
+			return null;
+		}
+
 		public async override Task<IEnumerable<InAppBillingProduct>> GetProductInfoAsync(ItemType itemType, params string[] productIds)
 		{
 			// Create a filtered list of the product AddOns I care about
@@ -49,8 +67,11 @@ namespace Plugin.InAppBilling
 			// Get list of Add Ons this app can sell, filtering for the types we know about
 			StoreProductQueryResult addOns = await storeContext.GetAssociatedStoreProductsAsync(filterList);
 
-
-			//addOns.Products // read only dictionary with string as key Store ID for the add-on and the value is a StoreProduct object
+			if (addOns.ExtendedError != null)
+			{
+				Debug.WriteLine("GetProductInfoAsync Extended Error:" + addOns.ExtendedError.ToString());
+				throw new InAppBillingPurchaseException(PurchaseError.GeneralError, addOns.ExtendedError);
+			}
 
 			StoreProduct product;
 
@@ -70,7 +91,7 @@ namespace Plugin.InAppBilling
 						{
 							Name = product.Title,
 							Description = product.Description,
-							ProductId = product.StoreId,
+							ProductId = kvp.Value.InAppOfferToken,
 							LocalizedPrice = product.Price.FormattedPrice,
 							CurrencyCode = product.Price.CurrencyCode
 							//CurrencyCode = product.CurrencyCode // Does not work at the moment, as UWP throws an InvalidCastException when getting CurrencyCode
@@ -80,14 +101,21 @@ namespace Plugin.InAppBilling
 				}
 			}
 
-			
+			lastListOfProducts = addOns.Products.Values;
 
 			return products;
 		}
 
 		public async override Task<InAppBillingPurchase> PurchaseAsync(string productId, ItemType itemType, string payload, IInAppBillingVerifyPurchase verifyPurchase = null)
 		{
-			StorePurchaseResult result = await storeContext.RequestPurchaseAsync(productId);
+			string mspid = await GetMSProductIDForPID(productId);
+			if( mspid == null )
+			{
+				throw new InAppBillingPurchaseException(PurchaseError.InvalidProduct);
+			}
+
+
+			StorePurchaseResult result = await storeContext.RequestPurchaseAsync(mspid);
 			if (result.ExtendedError != null)
 			{
 				Debug.WriteLine("Extended Error:" + result.ExtendedError.ToString() + " Result: " + result.Status.ToString());
@@ -131,13 +159,23 @@ namespace Plugin.InAppBilling
 		{
 			StoreAppLicense license = await storeContext.GetAppLicenseAsync();
 
-			 // products are in here
+			var products = new List<InAppBillingPurchase>();
 
 			foreach (KeyValuePair<string, StoreLicense> kvp in license.AddOnLicenses)
 			{
 				Debug.WriteLine("Store license for:" + kvp.Key + " Lic:" + kvp.Value.InAppOfferToken + " " + kvp.Value.SkuStoreId + " " + kvp.Value.ExtendedJsonData);
+				products.Add(new InAppBillingPurchase
+				{
+					Id = kvp.Key,
+					ProductId = kvp.Value.InAppOfferToken,
+					State = PurchaseState.Purchased,
+		//			AutoRenewing = false,
+	//				PurchaseToken
+//					ConsumptionState = ConsumptionState.NoYetConsumed
+				});
 			}
 
+			//return products;
 			return null;
 		}
 
